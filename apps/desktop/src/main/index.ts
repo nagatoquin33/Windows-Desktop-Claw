@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
+import { startBackend } from '@desktop-claw/backend'
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -26,6 +27,11 @@ function createWindow(): void {
 ipcMain.handle('ipc:ping', () => {
   console.log('[main] IPC OK — received ping from renderer')
   return 'pong from main 🐾'
+})
+
+// 启动内嵌后端 Service
+startBackend().catch((err: unknown) => {
+  console.error('[main] Failed to start backend:', err)
 })
 
 app.whenReady().then(() => {

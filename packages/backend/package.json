@@ -9,10 +9,12 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
-  "dependencies": {},
+  "dependencies": {
+    "fastify": "^5.8.2"
+  },
   "devDependencies": {
-    "typescript": "^5.4.0",
-    "@types/node": "^20.0.0",
-    "tsx": "^4.0.0"
+    "@types/node": "^20.19.37",
+    "tsx": "^4.0.0",
+    "typescript": "^5.4.0"
   }
 }
