@@ -18,6 +18,9 @@ data/
 
 # ---- 内部开发文档（不对外公开）----
 PLAN.md
+PRD.md
+DEVLOG.md
+ARCHITECTURE.md
 Hello-Claw学习笔记.md
 
 # ---- 系统文件 ----
