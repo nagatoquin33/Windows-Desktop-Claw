@@ -9,7 +9,7 @@
 ## 项目状态
 
 **当前阶段：** Milestone A（架构闭环）  
-**最近更新：** 2026-03-18  
+**最近更新：** 2026-03-19  
 **下一个目标：** A.1 ChatPanel UI + Milestone A.2 WebSocket 通路
 
 ---
@@ -39,6 +39,28 @@
 ---
 
 ## 开发日志
+
+### 2026-03-19｜代码质量修正 · M0/A.1 遗留问题清理
+
+**完成内容：**
+- `packages/backend/src/index.ts`：`startBackend()` 返回 `{ close }` 对象，支持优雅关闭，避免退出时端口残留
+- `apps/desktop/src/main/index.ts`：`startBackend()` 从模块顶层移入 `app.whenReady()` 内，启动顺序可控、失败可捕获
+- `apps/desktop/src/main/index.ts`：新增 `app.on('before-quit')` 回调，退出时调用 `backendHandle.close()` 释放 Fastify
+- `apps/desktop/src/main/index.ts`：新增 `ballWin.on('closed', () => ballWin = null)`，macOS 重激活时不再操作已销毁窗口
+- `apps/desktop/src/renderer/components/FloatingBall/index.tsx`：用 `listenersRef` + `useEffect` cleanup 保底清除 `window` 上的拖拽监听器，防止组件卸载时泄漏
+- `apps/desktop/src/main/index.ts`：为 `sandbox: false` 添加注释说明关闭原因（electron-vite preload 打包依赖）
+- `apps/desktop/tsconfig.node.json` + `tsconfig.web.json`：target 从 ES2020 统一为 ES2022，与 backend 包一致（Electron 34 完全支持）
+
+**验证结果：**
+- `pnpm typecheck` → 三个 tsconfig 目标全部 0 错误 ✅
+
+**关键决策记录：**
+- Backend 返回值设计：直接返回 `{ close }` 内联类型而非导出独立 interface，避免跨包 project references 下类型解析问题
+- sandbox 保持关闭：electron-vite 的 preload 打包机制需要 Node.js require，暂无法开启 sandbox，但通过 contextBridge 严格控制暴露面
+
+**下一步：** A.1 ChatPanel — 聊天面板 UI（输入框 + 消息列表 + 气泡 + 流式 cursor 动画）
+
+---
 
 ### 2026-03-18｜Milestone A.1 · 悬浮球 UI 完成（FloatingBall）
 

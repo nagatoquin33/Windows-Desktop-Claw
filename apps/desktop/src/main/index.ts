@@ -3,6 +3,7 @@ import { join } from 'path'
 import { startBackend } from '@desktop-claw/backend'
 
 let ballWin: BrowserWindow | null = null
+let backendHandle: { close: () => Promise<void> } | null = null
 
 /** 拖拽时记录光标相对于窗口左上角的偏移量 */
 let dragOffset = { x: 0, y: 0 }
@@ -24,6 +25,8 @@ function createBallWindow(): void {
     show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
+      // sandbox 关闭原因：electron-vite preload 打包依赖 Node.js require 机制
+      // 仅通过 contextBridge 暴露最小 IPC 通道，不在渲染进程直接使用 Node API
       sandbox: false
     }
   })
@@ -32,6 +35,10 @@ function createBallWindow(): void {
   ballWin.setAlwaysOnTop(true, 'floating')
 
   ballWin.on('ready-to-show', () => ballWin?.show())
+
+  ballWin.on('closed', () => {
+    ballWin = null
+  })
 
   if (process.env['NODE_ENV'] === 'development' && process.env['ELECTRON_RENDERER_URL']) {
     ballWin.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -68,17 +75,25 @@ ipcMain.handle('ipc:ping', () => {
 })
 
 // ── 启动内嵌后端 ───────────────────────────────────────────
-startBackend().catch((err: unknown) => {
-  console.error('[main] Failed to start backend:', err)
-})
+// 后端在 app.whenReady() 内启动，确保顺序可控
 
 // ── App 生命周期 ───────────────────────────────────────────
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  try {
+    backendHandle = await startBackend()
+  } catch (err: unknown) {
+    console.error('[main] Failed to start backend:', err)
+  }
+
   createBallWindow()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createBallWindow()
   })
+})
+
+app.on('before-quit', async () => {
+  await backendHandle?.close()
 })
 
 app.on('window-all-closed', () => {
