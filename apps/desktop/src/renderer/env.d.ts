@@ -18,6 +18,12 @@ declare global {
       repositionQuickInput: () => Promise<{ direction: 'left' | 'right' } | null>
       /** 右键上下文菜单 */
       showContextMenu: () => void
+      /** 关闭当前窗口 */
+      closeWindow: () => void
+      /** 读取配置 */
+      getConfig: () => Promise<Record<string, unknown>>
+      /** 写入配置 */
+      setConfig: (config: Record<string, unknown>) => Promise<void>
     }
   }
 }

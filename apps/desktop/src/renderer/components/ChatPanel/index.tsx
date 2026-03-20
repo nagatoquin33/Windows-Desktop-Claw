@@ -35,10 +35,15 @@ export function ChatPanel(): React.JSX.Element {
     [handleSend]
   )
 
+  const handleClose = useCallback(() => {
+    window.electronAPI.closeWindow()
+  }, [])
+
   return (
     <div className="chat-panel">
       <div className="chat-panel__header">
         <span className="chat-panel__title">Claw 🐾</span>
+        <button className="chat-panel__close" onClick={handleClose} title="关闭">×</button>
       </div>
 
       <div className="chat-panel__messages" ref={listRef}>

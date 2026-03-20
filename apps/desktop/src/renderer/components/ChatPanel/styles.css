@@ -17,6 +17,7 @@
 .chat-panel__header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   height: 44px;
   padding: 0 16px;
   background: rgba(30, 30, 34, 0.9);
@@ -28,6 +29,27 @@
   font-size: 14px;
   font-weight: 600;
   opacity: 0.9;
+}
+
+.chat-panel__close {
+  -webkit-app-region: no-drag;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(240, 240, 240, 0.5);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.chat-panel__close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f0f0f0;
 }
 
 /* ── 消息列表 ────────────────────────────────────────── */

@@ -19,5 +19,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   repositionQuickInput: (): Promise<{ direction: 'left' | 'right' } | null> =>
     ipcRenderer.invoke('quickinput:reposition'),
   /** 右键上下文菜单 */
-  showContextMenu: (): void => { ipcRenderer.send('contextmenu:show') }
+  showContextMenu: (): void => { ipcRenderer.send('contextmenu:show') },
+  /** 关闭当前窗口 */
+  closeWindow: (): void => { ipcRenderer.send('window:close') },
+  /** 读取配置 */
+  getConfig: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('config:get'),
+  /** 写入配置 */
+  setConfig: (config: Record<string, unknown>): Promise<void> => ipcRenderer.invoke('config:set', config)
 })

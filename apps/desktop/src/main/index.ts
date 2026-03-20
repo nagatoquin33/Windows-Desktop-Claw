@@ -1,9 +1,11 @@
 import { app, BrowserWindow, ipcMain, Menu, screen } from 'electron'
 import { join } from 'path'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { startBackend } from '@desktop-claw/backend'
 
 let ballWin: BrowserWindow | null = null
 let panelWin: BrowserWindow | null = null
+let settingsWin: BrowserWindow | null = null
 let backendHandle: { close: () => Promise<void> } | null = null
 
 /** 拖拽时记录光标相对于窗口左上角的偏移量 */
@@ -11,7 +13,7 @@ let dragOffset = { x: 0, y: 0 }
 
 /** 悬浮球窗口尺寸（含气泡区域） */
 const BALL_WIN_W = 240
-const BALL_WIN_H = 220
+const BALL_WIN_H = 340
 
 function createBallWindow(): void {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize
@@ -222,6 +224,8 @@ ipcMain.handle('quickinput:reposition', () => {
 
 const PANEL_W = 400
 const PANEL_H = 600
+const SETTINGS_W = 360
+const SETTINGS_H = 420
 
 function createPanelWindow(): void {
   if (panelWin) {
@@ -283,6 +287,48 @@ function createPanelWindow(): void {
   }
 }
 
+function createSettingsWindow(): void {
+  if (settingsWin) {
+    settingsWin.focus()
+    return
+  }
+
+  // 定位在屏幕中央偏上
+  const display = screen.getPrimaryDisplay()
+  const workArea = display.workArea
+  const x = Math.round(workArea.x + (workArea.width - SETTINGS_W) / 2)
+  const y = Math.round(workArea.y + (workArea.height - SETTINGS_H) / 3)
+
+  settingsWin = new BrowserWindow({
+    width: SETTINGS_W,
+    height: SETTINGS_H,
+    x,
+    y,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: false,
+    resizable: false,
+    hasShadow: true,
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false
+    }
+  })
+
+  settingsWin.setAlwaysOnTop(true, 'floating')
+  settingsWin.on('ready-to-show', () => settingsWin?.show())
+  settingsWin.on('closed', () => { settingsWin = null })
+
+  const settingsParam = '?view=settings'
+  if (process.env['NODE_ENV'] === 'development' && process.env['ELECTRON_RENDERER_URL']) {
+    settingsWin.loadURL(process.env['ELECTRON_RENDERER_URL'] + settingsParam)
+  } else {
+    settingsWin.loadFile(join(__dirname, '../renderer/index.html'), { search: 'view=settings' })
+  }
+}
+
 ipcMain.on('contextmenu:show', () => {
   if (!ballWin) return
 
@@ -296,8 +342,7 @@ ipcMain.on('contextmenu:show', () => {
     {
       label: '设置',
       click: () => {
-        // TODO: 设置面板（Milestone B）
-        console.log('[main] open Settings (not implemented yet)')
+        createSettingsWindow()
       }
     },
     { type: 'separator' },
@@ -310,6 +355,45 @@ ipcMain.on('contextmenu:show', () => {
   ])
 
   menu.popup({ window: ballWin })
+})
+
+// ── IPC: 关闭当前窗口 ─────────────────────────────────────
+ipcMain.on('window:close', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.close()
+})
+
+// ── 配置管理 ──────────────────────────────────────────────
+
+function getConfigPath(): string {
+  if (app.isPackaged) return join(app.getPath('userData'), 'config.json')
+  // dev: 项目根目录 data/config.json（__dirname = apps/desktop/out/main/）
+  return join(__dirname, '..', '..', '..', '..', 'data', 'config.json')
+}
+
+function readConfig(): Record<string, unknown> {
+  const configPath = getConfigPath()
+  if (!existsSync(configPath)) return {}
+  try {
+    return JSON.parse(readFileSync(configPath, 'utf-8'))
+  } catch {
+    return {}
+  }
+}
+
+function writeConfig(config: Record<string, unknown>): void {
+  const configPath = getConfigPath()
+  const dir = join(configPath, '..')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
+}
+
+ipcMain.handle('config:get', () => {
+  return readConfig()
+})
+
+ipcMain.handle('config:set', (_event, config: Record<string, unknown>) => {
+  const existing = readConfig()
+  writeConfig({ ...existing, ...config })
 })
 
 // ── 启动内嵌后端 ───────────────────────────────────────────
