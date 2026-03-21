@@ -8,20 +8,22 @@ export interface StreamCallbacks {
 }
 
 const TIMEOUT_MS = 30_000
-const SYSTEM_PROMPT = '你是 Claw 🐾，一个住在用户桌面上的 AI 桌宠伙伴。你友好、简洁、有趣，偶尔带点俏皮。用中文回复。'
+const DEFAULT_SYSTEM_PROMPT = '你是 Claw 🐾，一个住在用户桌面上的 AI 桌宠伙伴。你友好、简洁、有趣，偶尔带点俏皮。用中文回复。'
 
 /**
  * 流式调用 OpenAI 兼容 LLM API
+ * @param systemPrompt 可选，自定义 system prompt（由 Agent Loop 传入）
  * @returns 一个 AbortController，可调用 .abort() 取消请求
  */
 export function streamChat(
   history: ChatMessageData[],
-  callbacks: StreamCallbacks
+  callbacks: StreamCallbacks,
+  systemPrompt?: string
 ): AbortController {
   const controller = new AbortController()
 
   // 异步执行，不阻塞调用方
-  void _doStream(history, callbacks, controller)
+  void _doStream(history, callbacks, controller, systemPrompt)
 
   return controller
 }
@@ -29,7 +31,8 @@ export function streamChat(
 async function _doStream(
   history: ChatMessageData[],
   { onToken, onDone, onError }: StreamCallbacks,
-  controller: AbortController
+  controller: AbortController,
+  systemPrompt?: string
 ): Promise<void> {
   const config = loadLLMConfig()
   if (!config) {
@@ -39,7 +42,7 @@ async function _doStream(
 
   // 构建 messages：system + history
   const messages = [
-    { role: 'system' as const, content: SYSTEM_PROMPT },
+    { role: 'system' as const, content: systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
     ...history.map((m) => ({ role: m.role, content: m.content }))
   ]
 

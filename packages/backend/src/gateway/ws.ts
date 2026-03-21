@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import websocket from '@fastify/websocket'
 import type { WebSocket } from 'ws'
 import type { ChatMessageData } from '@desktop-claw/shared'
-import { streamChat } from '../llm/client'
+import { agentLoop } from '../agent/loop'
 
 /** 内存会话记录（MVP：单对话，无持久化） */
 const conversation: ChatMessageData[] = []
@@ -86,9 +86,11 @@ function handleClientMessage(
         payload: { content }
       })
 
-      // LLM 流式调用
+      // Agent Loop（替代直接调 LLM）
       activeTaskId = msg.taskId
-      activeAbort = streamChat(conversation, {
+      activeAbort = agentLoop({
+        prompt: content,
+        history: conversation.slice(0, -1), // 不含刚 push 的当前 user 消息（loop 内部会自己追加）
         onToken(delta) {
           broadcast({
             id: genMsgId(),
