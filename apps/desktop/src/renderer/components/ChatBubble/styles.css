@@ -24,6 +24,13 @@
   max-width: none;
 }
 
+/* 展开态取消行数限制，完整展示内容 */
+.ball-root--expanded .chat-bubble__text {
+  -webkit-line-clamp: unset;
+  display: block;
+  overflow: visible;
+}
+
 .chat-bubble--hiding {
   opacity: 0 !important;
   transform: translateY(-4px) scale(0.95);

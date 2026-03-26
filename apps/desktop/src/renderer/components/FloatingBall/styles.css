@@ -40,6 +40,22 @@ body,
 }
 
 /* ── 底部区域（球 + QuickInput）────────────── */
+
+.ball-status {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: center;
+  padding: 2px 8px;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: ball-status-in 0.2s ease;
+}
+
+@keyframes ball-status-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .bottom-section {
   display: flex;
   flex-direction: row;
@@ -52,6 +68,8 @@ body,
 .ball-root--expanded .bubble-area {
   align-items: stretch;
   padding: 8px 12px;
+  overflow-y: auto;
+  pointer-events: auto;
 }
 
 .ball-root--expanded .bottom-section {

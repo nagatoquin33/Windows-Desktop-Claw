@@ -28,7 +28,8 @@ interface BuiltinSkillConfig {
  * Agent Skills 标准：Skill 的能力通过 scripts/ 目录下的脚本提供，而非进程内 Tool
  */
 const BUILTIN_SKILLS: BuiltinSkillConfig[] = [
-  { name: 'file', autoActivate: true }
+  { name: 'file', autoActivate: true },
+  { name: 'memory' }
 ]
 
 /**

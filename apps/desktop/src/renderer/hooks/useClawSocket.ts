@@ -2,6 +2,15 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 
 const WS_URL = 'ws://127.0.0.1:3721/ws'
 
+/** 指数退避重连参数 */
+const RECONNECT_BASE_MS = 1000
+const RECONNECT_MAX_MS = 30_000
+
+/** 流式 token watchdog：15s 无 token 视为中断 */
+const TOKEN_WATCHDOG_MS = 15_000
+
+export type ConnectionState = 'connecting' | 'connected' | 'disconnected'
+
 export interface ChatMessage {
   id: number
   role: 'user' | 'assistant'
@@ -28,27 +37,80 @@ function genTaskId(): string {
 }
 
 export function useClawSocket(): {
-  connected: boolean
+  connectionState: ConnectionState
   messages: ChatMessage[]
+  statusText: string
   sendMessage: (content: string) => void
 } {
-  const [connected, setConnected] = useState(false)
+  const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected')
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [statusText, setStatusText] = useState('')
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 当前退避延迟（ms），每次重连失败翻倍，成功后重置 */
+  const reconnectDelay = useRef(RECONNECT_BASE_MS)
   /** 记录本客户端发起的 taskId，用于 ack 时去重用户消息 */
   const sentTaskIds = useRef(new Set<string>())
+  /** 流式 token watchdog 计时器 */
+  const watchdogTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 当前正在流式处理的 taskId（用于超时时发 cancel） */
+  const activeTaskId = useRef<string | null>(null)
+
+  const clearWatchdog = useCallback(() => {
+    if (watchdogTimer.current) {
+      clearTimeout(watchdogTimer.current)
+      watchdogTimer.current = null
+    }
+    activeTaskId.current = null
+  }, [])
+
+  const resetWatchdog = useCallback(() => {
+    if (watchdogTimer.current) clearTimeout(watchdogTimer.current)
+    watchdogTimer.current = setTimeout(() => {
+      console.warn('[ws] token watchdog timeout, cancelling task')
+      // 发送 cancel
+      const ws = wsRef.current
+      const taskId = activeTaskId.current
+      if (ws && ws.readyState === WebSocket.OPEN && taskId) {
+        ws.send(JSON.stringify({
+          id: `cli_${Date.now()}_wd`,
+          type: 'task.cancel',
+          taskId,
+          ts: new Date().toISOString(),
+          payload: {}
+        }))
+      }
+      // 降级显示
+      setMessages((prev) => {
+        const updated = [...prev]
+        const last = updated[updated.length - 1]
+        if (last?.streaming) {
+          updated[updated.length - 1] = {
+            ...last,
+            content: last.content
+              ? last.content + '\n\n⚠️ 回复中断，请重试'
+              : '⚠️ 回复中断，请重试',
+            streaming: false
+          }
+        }
+        return updated
+      })
+      clearWatchdog()
+    }, TOKEN_WATCHDOG_MS)
+  }, [clearWatchdog])
 
   const handleEnvelope = useCallback((envelope: WsEnvelope) => {
     switch (envelope.type) {
       case 'conversation.history': {
-        const msgs = (envelope.payload.messages as Array<{ role: string; content: string }>) ?? []
+        const msgs = (envelope.payload.messages as Array<{ role: string; content: string; tool_calls?: unknown[] }>) ?? []
         setMessages(
-          msgs.map((m) => ({
-            id: nextMsgId(),
-            role: m.role as 'user' | 'assistant',
-            content: m.content
-          }))
+          msgs
+            .filter((m) => (m.role === 'user' || m.role === 'assistant') && !m.tool_calls)
+            .map((m) => ({
+              id: nextMsgId(),
+              role: m.role as 'user' | 'assistant',
+              content: m.content
+            }))
         )
         break
       }
@@ -64,11 +126,21 @@ export function useClawSocket(): {
           ...prev,
           { id: nextMsgId(), role: 'assistant', content: '', streaming: true }
         ])
+        // 启动 watchdog
+        activeTaskId.current = envelope.taskId
+        resetWatchdog()
+        break
+      }
+
+      case 'task.status': {
+        const text = (envelope.payload.text as string) ?? ''
+        setStatusText(text)
         break
       }
 
       case 'task.token': {
         const delta = (envelope.payload.delta as string) ?? ''
+        setStatusText('')
         setMessages((prev) => {
           const updated = [...prev]
           const last = updated[updated.length - 1]
@@ -77,11 +149,14 @@ export function useClawSocket(): {
           }
           return updated
         })
+        // 收到 token，重置 watchdog
+        resetWatchdog()
         break
       }
 
       case 'task.done': {
         const content = (envelope.payload.content as string) ?? ''
+        setStatusText('')
         setMessages((prev) => {
           const updated = [...prev]
           const last = updated[updated.length - 1]
@@ -94,11 +169,13 @@ export function useClawSocket(): {
         })
         // 清理已完成的 taskId
         sentTaskIds.current.delete(envelope.taskId)
+        clearWatchdog()
         break
       }
 
       case 'task.error': {
         const message = (envelope.payload.message as string) ?? '出错了'
+        setStatusText('')
         setMessages((prev) => {
           const updated = [...prev]
           const last = updated[updated.length - 1]
@@ -112,10 +189,12 @@ export function useClawSocket(): {
           return updated
         })
         sentTaskIds.current.delete(envelope.taskId)
+        clearWatchdog()
         break
       }
 
       case 'task.cancelled': {
+        setStatusText('')
         setMessages((prev) => {
           const updated = [...prev]
           const last = updated[updated.length - 1]
@@ -125,20 +204,24 @@ export function useClawSocket(): {
           return updated
         })
         sentTaskIds.current.delete(envelope.taskId)
+        clearWatchdog()
         break
       }
     }
-  }, [])
+  }, [resetWatchdog, clearWatchdog])
 
   const connect = useCallback(() => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return
 
+    setConnectionState('connecting')
     const ws = new WebSocket(WS_URL)
     wsRef.current = ws
 
     ws.onopen = (): void => {
       console.log('[ws] connected')
-      setConnected(true)
+      setConnectionState('connected')
+      // 连接成功，重置退避延迟
+      reconnectDelay.current = RECONNECT_BASE_MS
     }
 
     ws.onmessage = (event: MessageEvent): void => {
@@ -152,11 +235,15 @@ export function useClawSocket(): {
 
     ws.onclose = (): void => {
       console.log('[ws] disconnected')
-      setConnected(false)
+      setConnectionState('disconnected')
       // 只有当前活跃连接断线才重连；cleanup 关闭的旧连接不触发重连
       if (wsRef.current === ws) {
         wsRef.current = null
-        reconnectTimer.current = setTimeout(connect, 1000)
+        const delay = reconnectDelay.current
+        console.log(`[ws] reconnecting in ${delay}ms`)
+        reconnectTimer.current = setTimeout(connect, delay)
+        // 指数退避：翻倍，不超过上限
+        reconnectDelay.current = Math.min(delay * 2, RECONNECT_MAX_MS)
       }
     }
 
@@ -172,6 +259,8 @@ export function useClawSocket(): {
         clearTimeout(reconnectTimer.current)
         reconnectTimer.current = null
       }
+      // 清理 watchdog
+      clearWatchdog()
       // 先置空 ref 再 close，确保 onclose 不会重连
       const ws = wsRef.current
       wsRef.current = null
@@ -200,5 +289,5 @@ export function useClawSocket(): {
     )
   }, [])
 
-  return { connected, messages, sendMessage }
+  return { connectionState, messages, statusText, sendMessage }
 }

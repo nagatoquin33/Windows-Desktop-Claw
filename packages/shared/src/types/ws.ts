@@ -17,6 +17,7 @@ export type ServerMessageType =
   | 'task.done'
   | 'task.error'
   | 'task.cancelled'
+  | 'task.status'
   | 'conversation.history'
 
 export type WsMessageType = ClientMessageType | ServerMessageType

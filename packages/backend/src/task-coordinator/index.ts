@@ -10,6 +10,7 @@ export interface TaskCallbacks {
   onDone: (fullContent: string) => void
   onError: (code: string, message: string) => void
   onCancelled: () => void
+  onStatus?: (text: string) => void
 }
 
 interface Task {
@@ -21,6 +22,8 @@ interface Task {
 
 /** 队列上限，防堆积 */
 const MAX_QUEUE_SIZE = 20
+/** 单个 task 最大执行时间 */
+const TASK_TIMEOUT_MS = 120_000
 
 // ─── TaskCoordinator ──────────────────────────
 
@@ -35,6 +38,7 @@ export class TaskCoordinator {
   private queue: Task[] = []
   private running: Task | null = null
   private abortController: AbortController | null = null
+  private taskTimer: ReturnType<typeof setTimeout> | null = null
 
   /** 获取会话历史的回调，由外部注入 */
   private getHistory: () => ChatMessageData[]
@@ -78,6 +82,7 @@ export class TaskCoordinator {
     if (this.running?.taskId === taskId) {
       this.running.status = 'cancelled'
       this.abortController?.abort()
+      this.clearTaskTimer()
       this.running.callbacks.onCancelled()
       this.running = null
       this.abortController = null
@@ -106,6 +111,13 @@ export class TaskCoordinator {
 
   // ─── 内部 ───────────────────────────────────
 
+  private clearTaskTimer(): void {
+    if (this.taskTimer) {
+      clearTimeout(this.taskTimer)
+      this.taskTimer = null
+    }
+  }
+
   private drain(): void {
     if (this.running) return
     const next = this.queue.shift()
@@ -115,12 +127,28 @@ export class TaskCoordinator {
     next.status = 'running'
     console.log(`[coordinator] running task ${next.taskId}`)
 
+    // task 级超时：120s 后强制终止
+    this.taskTimer = setTimeout(() => {
+      if (this.running?.taskId === next.taskId) {
+        console.warn(`[coordinator] task ${next.taskId} timed out after ${TASK_TIMEOUT_MS}ms`)
+        this.abortController?.abort()
+        next.status = 'failed'
+        next.callbacks.onError('TASK_TIMEOUT', `任务超时（${TASK_TIMEOUT_MS / 1000}s）`)
+        this.running = null
+        this.abortController = null
+        this.taskTimer = null
+        this.drain()
+      }
+    }, TASK_TIMEOUT_MS)
+
     this.abortController = agentLoop({
       prompt: next.content,
       history: this.getHistory(),
       onToken: (delta) => next.callbacks.onToken(delta),
+      onStatus: next.callbacks.onStatus ? (text) => next.callbacks.onStatus!(text) : undefined,
       onDone: (fullContent, newMessages) => {
         next.status = 'done'
+        this.clearTaskTimer()
         this.pushMessages(newMessages)
         next.callbacks.onDone(fullContent)
         this.running = null
@@ -129,6 +157,7 @@ export class TaskCoordinator {
       },
       onError: (code, message) => {
         next.status = 'failed'
+        this.clearTaskTimer()
         next.callbacks.onError(code, message)
         this.running = null
         this.abortController = null

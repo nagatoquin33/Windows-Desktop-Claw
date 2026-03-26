@@ -57,7 +57,7 @@ function readCached(filePath: string): string {
 
 // ─── Base Prompt 模板 ────────────────────────
 
-function buildBasePrompt(): string {
+function buildBasePrompt(isBootstrap: boolean, dataDir: string): string {
   const now = new Date()
   const dateStr = now.toLocaleDateString('zh-CN', {
     year: 'numeric',
@@ -67,20 +67,36 @@ function buildBasePrompt(): string {
   })
   const timeStr = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 
-  return `## 系统信息
+  let prompt = `## 系统信息
 
 当前时间：${dateStr} ${timeStr}
+
+## 关键路径
+
+- 项目数据目录: ${dataDir}
+- 用户画像: ${join(dataDir, 'persona', 'USER.md')}
+- 人格核心: ${join(dataDir, 'persona', 'SOUL.md')}
+- 动态认知: ${join(dataDir, 'persona', 'CONTEXT.md')}
+- 记忆存储: ${join(dataDir, 'memory')}/
+
+> 执行文件操作时，请使用上述绝对路径，不要猜测。
 
 ## 回复规范
 
 - 使用中文回复
 - 简洁为主，用户没要求详细就不展开
-- 涉及文件操作时，先确认路径再执行
-- 不编造不确定的信息，坦诚说"不确定"
+- 涉及文件操作时，使用上方「关键路径」中列出的绝对路径
+- 不编造不确定的信息，坦诚说"不确定"`
+
+  if (!isBootstrap) {
+    prompt += `
 
 ## 记忆引导
 
 你的长期记忆存在 CONTEXT.md 中（已注入到下方）。如需回忆更早或更详细的内容，使用 recall_memory 或 search_memory 工具。如需精确还原原始对话，用 read_file 读取 data/memory/YYYY-MM-DD.json。`
+  }
+
+  return prompt
 }
 
 // ─── 主组装函数 ──────────────────────────────
@@ -106,10 +122,15 @@ export function assembleSystemPrompt(
   const dataDir = resolveDataDir()
   const personaDir = join(dataDir, 'persona')
 
+  // 提前检测 BOOTSTRAP.md 是否存在（决定是否为引导模式）
+  const bootstrapPath = join(personaDir, 'BOOTSTRAP.md')
+  const bootstrap = readCached(bootstrapPath)
+  const isBootstrap = bootstrap.length > 0
+
   const parts: string[] = []
 
-  // Layer 1: Base Prompt
-  parts.push(buildBasePrompt())
+  // Layer 1: Base Prompt（引导模式下跳过记忆引导语）
+  parts.push(buildBasePrompt(isBootstrap, dataDir))
 
   // Layer 2: SOUL.md（人格核心）
   const soul = readCached(join(personaDir, 'SOUL.md'))
@@ -140,7 +161,6 @@ export function assembleSystemPrompt(
   }
 
   // Layer 6: BOOTSTRAP.md（仅首次引导时存在，引导完成后自毁）
-  const bootstrap = readCached(join(personaDir, 'BOOTSTRAP.md'))
   if (bootstrap) {
     parts.push(bootstrap)
   }

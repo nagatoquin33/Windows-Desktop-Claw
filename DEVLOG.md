@@ -10,7 +10,7 @@
 
 **当前阶段：** Milestone B 🔄 进行中  
 **最近更新：** 2026-03-26  
-**当前进度：** B.1 Companion 人格体系 ✅ 完成
+**当前进度：** B.2–B.8 全部代码完成 + 运行时 Bug 修复 + Agent 状态指示器
 
 ---
 
@@ -39,6 +39,79 @@
 ---
 
 ## 开发日志
+
+### 2026-03-26｜B.2–B.8 全栈实现 + 运行时 Bug 修复 + Agent 状态指示器
+
+**完成内容：**
+
+**B.2 Memory Service — 按天归档：**
+- `memory-service.ts`：完整 Memory Service 模块 — 按天 JSON 归档（`data/memory/YYYY-MM-DD.json`），实时 `appendMessage()` + `sealDay()` 归档（LLM 生成 diary/summary/facts）
+- 情绪状态机 `deriveEmotionState()`：纯函数从当日记忆 + 时间派生 EmotionState，零 LLM 调用
+- 关机归档：Electron `before-quit` → `sealDay()` 触发
+
+**B.2.1 Memory Skill — 记忆检索能力：**
+- `skills/memory/` + `SKILL.md`：遵循 Agent Skills 标准格式
+- `recall_memory`：按日期范围查询记忆（summary + diary + facts）
+- `search_memory`：按关键词搜索历史记忆（文本匹配）
+
+**B.3 记忆按需检索 + 摘要压缩 + 每日内化：**
+- Skill-based 三层记忆检索：L0 人格层（始终注入 CONTEXT.md）→ L1 Memory Skill（按需调用）→ L2 read_file（深度回溯）
+- 重启恢复：启动时从当日 JSON 恢复 conversation
+- 摘要压缩：超 20 轮 LLM 摘要压缩 + tool_result 修剪
+- 每日内化：归档后 LLM 更新 CONTEXT.md 和 USER.md
+
+**B.4 BOOTSTRAP 首次引导：**
+- 双向引导式对话："互相认识"仪式 → 写入 USER.md + 更新 SOUL.md
+- 自毁式 BOOTSTRAP：引导完成后删除 BOOTSTRAP.md 释放 token
+
+**B.5 断线重连 + 流式异常兜底：**
+- WS 指数退避重连（1s → 2s → ... → 30s 上限）
+- 流式 token watchdog（15s 无 token → 主动 cancel + 降级提示）
+- per-token 超时（后端 SSE 30s）+ task 级超时（120s）
+- 前端连接状态 UI 提示条
+
+**B.6 Context 精细管理：**
+- `token-estimator.ts`：轻量 token 估算（中文 ~1.5 字/token，英文 ~4 字符/token）
+- `trimHistory()` 改为 token-aware：context window 90% 预算
+- `buildAtomicGroups()`：assistant(tool_calls) + tool(result) 原子组不拆分
+- `compressIfNeeded()` 双阈值触发
+
+**B.8 日历视图 — 按天回顾：**
+- 后端：`GET /calendar/dates`、`GET /calendar/:date`、`GET /calendar/:date/messages` 三个 HTTP 路由
+- 前端：CalendarView 自写月历组件 + DayDetailView 日期详情页
+- ChatPanel Tab 切换：「💬 对话」|「📅 回顾」
+
+**运行时 Bug 修复（实机测试发现）：**
+
+1. **Prompt 路径注入**：LLM 无法找到人格文件绝对路径 → `prompt-assembler.ts` 的 `buildBasePrompt(isBootstrap, dataDir)` 注入"关键路径"段落，BOOTSTRAP.md 引用系统注入路径
+2. **双击退出**：before-quit 中 async sealDay 可能 hang 导致需点两次退出 → 立即 `win.destroy()` + 8s 超时 fallback `app.exit(0)`
+3. **Tool 消息泄漏到 UI**：conversation.history 包含 tool/tool_calls 消息 → `useClawSocket.ts` 过滤 `role === 'tool'` 和含 `tool_calls` 的消息
+4. **日历数据加载失败（CSP/CORS）**：CSP `connect-src` 未放行 HTTP + 后端无 CORS 头 → index.html 添加 `http://127.0.0.1:3721`，后端添加 CORS `onRequest` hook
+5. **日历样式优化**（3 轮迭代）：最终方案 — 有记录日期 = 橙色文字，今天 = 灰色圆点，有记录+今天 = 橙色文字+橙色圆点，hover 才显示背景色
+
+**Agent 状态指示器（新功能）：**
+- 新增 WS 消息类型 `task.status`（`@desktop-claw/shared` 类型扩展）
+- Agent Loop 在每个阶段发射状态：🧠 思考中... / 💭 回忆中... / 📖 读取文件中... / ✏️ 写入文件中... 等
+- `loop.ts`：`onStatus` 回调 + `toolStatusText()` 工具名映射
+- `task-coordinator`：`TaskCallbacks.onStatus` 透传
+- `ws.ts`：广播 `task.status` 消息到所有客户端
+- `useClawSocket.ts`：`statusText` 状态，首个 token / done / error / cancelled 时自动清除
+- ChatPanel：消息列表与输入框之间显示状态文本（fade-in 动画）
+- FloatingBall：气泡区底部显示状态文本
+- 设计原则：临时提示，不存入对话/记忆，替换式更新，流式开始时消失
+
+**验证结果：**
+- `pnpm typecheck` → shared + backend + desktop 三个包全部 0 错误 ✅
+
+**关键决策记录：**
+- Agent 状态指示器走 WS 而非 React state 回调，保证多窗口（Ball + Panel）同步显示
+- 状态文本不进入 conversation history，避免污染记忆
+- 日历数据走 HTTP（request-response 语义）而非 WS
+- 月历自写（~100 行 React），不引入第三方库
+
+**下一步：** Milestone B 验收 + git 提交
+
+---
 
 ### 2026-03-26｜B.1 Companion 人格体系 — System Prompt 5 层组装 + 效果验证
 

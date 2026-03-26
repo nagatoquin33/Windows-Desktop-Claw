@@ -6,7 +6,7 @@ import { startBackend } from '@desktop-claw/backend'
 let ballWin: BrowserWindow | null = null
 let panelWin: BrowserWindow | null = null
 let settingsWin: BrowserWindow | null = null
-let backendHandle: { close: () => Promise<void> } | null = null
+let backendHandle: { close: () => Promise<void>; sealDay: () => Promise<void> } | null = null
 
 /** 拖拽时记录光标相对于窗口左上角的偏移量 */
 let dragOffset = { x: 0, y: 0 }
@@ -414,8 +414,33 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('before-quit', async () => {
-  await backendHandle?.close()
+let isQuitting = false
+app.on('before-quit', (event) => {
+  if (isQuitting) return           // 第二次进入：不拦截，让 Electron 正常退出
+  if (!backendHandle) return       // 后端未启动：直接退出
+  event.preventDefault()
+  isQuitting = true
+
+  // 先关闭所有窗口（断开 WS），再做后端清理
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.destroy()
+  }
+
+  // 关机归档：sealDay → close → exit，设 8s 超时兜底
+  const exitTimer = setTimeout(() => {
+    console.warn('[main] shutdown timeout, force exit')
+    app.exit(0)
+  }, 8000)
+
+  const handle = backendHandle
+  handle.sealDay()
+    .catch((err) => console.error('[main] sealDay error:', err))
+    .then(() => handle.close())
+    .catch((err) => console.error('[main] close error:', err))
+    .finally(() => {
+      clearTimeout(exitTimer)
+      app.exit(0)
+    })
 })
 
 app.on('window-all-closed', () => {

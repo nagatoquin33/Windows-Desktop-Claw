@@ -16,7 +16,10 @@ export interface StreamChatOptions {
   systemPrompt?: string
 }
 
+/** 初始 fetch 超时（等待首次响应） */
 const TIMEOUT_MS = 30_000
+/** SSE 流中每次读取的超时（防半开连接） */
+const PER_TOKEN_TIMEOUT_MS = 30_000
 const DEFAULT_SYSTEM_PROMPT = '你是 Claw 🐾，一个住在用户桌面上的 AI 桌宠伙伴。你友好、简洁、有趣，偶尔带点俏皮。用中文回复。'
 
 /**
@@ -115,7 +118,14 @@ async function _doStream(
     const pendingToolCalls: Map<number, { id: string; type: 'function'; function: { name: string; arguments: string } }> = new Map()
 
     while (true) {
-      const { done, value } = await reader.read()
+      // per-token 超时：每次读取最多等 30s，防 DeepSeek 半开连接
+      const readResult = await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('PER_TOKEN_TIMEOUT')), PER_TOKEN_TIMEOUT_MS)
+        )
+      ])
+      const { done, value } = readResult
       if (done) break
 
       buffer += decoder.decode(value, { stream: true })
@@ -192,6 +202,10 @@ async function _doStream(
 
     if (err instanceof Error && err.name === 'AbortError') {
       onError('TIMEOUT', '请求超时或已取消')
+    } else if (err instanceof Error && err.message === 'PER_TOKEN_TIMEOUT') {
+      console.warn('[llm] per-token timeout, aborting stream')
+      controller.abort()
+      onError('STREAM_TIMEOUT', 'LLM 响应中断（超过 30s 未收到新数据）')
     } else {
       const message = err instanceof Error ? err.message : String(err)
       console.error('[llm] stream error:', message)

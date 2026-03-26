@@ -5,6 +5,8 @@ export interface LLMConfig {
   apiKey: string
   baseURL: string
   model: string
+  /** 模型上下文窗口大小（token 数），用于裁剪预算计算。默认 64000 */
+  contextWindow: number
 }
 
 /**
@@ -27,7 +29,8 @@ export function loadLLMConfig(): LLMConfig | null {
           return {
             apiKey: raw.llm.apiKey,
             baseURL: raw.llm.baseURL || 'https://api.openai.com/v1',
-            model: raw.llm.model || 'gpt-4o'
+            model: raw.llm.model || 'gpt-4o',
+            contextWindow: raw.llm.contextWindow || 115000
           }
         }
       } catch {

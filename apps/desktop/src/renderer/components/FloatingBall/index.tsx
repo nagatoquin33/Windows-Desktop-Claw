@@ -43,7 +43,7 @@ interface BubbleItem {
 }
 
 export function FloatingBall(): React.JSX.Element {
-  const { messages, sendMessage } = useClawSocket()
+  const { messages, statusText, sendMessage } = useClawSocket()
   const [bubbles, setBubbles] = useState<BubbleItem[]>([])
   const [qiState, setQiState] = useState<QuickInputState | null>(null)
   const movedRef = useRef(false)
@@ -252,6 +252,7 @@ export function FloatingBall(): React.JSX.Element {
             onDismiss={handleBubbleDismiss}
           />
         ))}
+        {statusText && <div className="ball-status">{statusText}</div>}
       </div>
       <div className="bottom-section">
         {expanded && direction === 'left' && (

@@ -3,9 +3,10 @@ import websocket from '@fastify/websocket'
 import type { WebSocket } from 'ws'
 import type { ChatMessageData } from '@desktop-claw/shared'
 import { TaskCoordinator } from '../task-coordinator'
+import { memoryService } from '../memory/memory-service'
 
-/** 内存会话记录（MVP：单对话，无持久化） */
-const conversation: ChatMessageData[] = []
+/** 内存会话记录 — 启动时从当日 JSON 恢复 */
+const conversation: ChatMessageData[] = memoryService.getTodayMessages()
 const clients = new Set<WebSocket>()
 
 /** 任务协调器：FIFO 串行队列 */
@@ -13,7 +14,12 @@ const coordinator = new TaskCoordinator(
   // getHistory：返回不含最后一条 user 消息的历史（agentLoop 内部会自己追加 prompt）
   () => conversation.slice(0, -1),
   // pushMessages：任务完成后追加本轮所有消息（tool_calls + tool_result + final assistant）
-  (messages) => conversation.push(...messages)
+  (messages) => {
+    conversation.push(...messages)
+    memoryService.appendMessages(messages)
+    // 异步触发摘要压缩检查（不阻塞当前任务完成）
+    void memoryService.compressIfNeeded(conversation)
+  }
 )
 
 let msgCounter = 0
@@ -80,6 +86,7 @@ function handleClientMessage(
 
       // 记录用户消息
       conversation.push({ role: 'user', content })
+      memoryService.appendMessage({ role: 'user', content })
 
       // 广播 ack（附带 content 以便其他窗口同步用户消息）
       broadcast({
@@ -99,6 +106,15 @@ function handleClientMessage(
             taskId: msg.taskId,
             ts: new Date().toISOString(),
             payload: { delta }
+          })
+        },
+        onStatus(text) {
+          broadcast({
+            id: genMsgId(),
+            type: 'task.status',
+            taskId: msg.taskId,
+            ts: new Date().toISOString(),
+            payload: { text }
           })
         },
         onDone(fullContent) {
