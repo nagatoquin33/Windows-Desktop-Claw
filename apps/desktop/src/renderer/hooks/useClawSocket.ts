@@ -135,6 +135,7 @@ export function useClawSocket(): {
       case 'task.status': {
         const text = (envelope.payload.text as string) ?? ''
         setStatusText(text)
+        resetWatchdog()
         break
       }
 
