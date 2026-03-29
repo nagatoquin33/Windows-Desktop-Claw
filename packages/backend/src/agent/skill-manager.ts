@@ -383,7 +383,16 @@ export class SkillManager {
       return { success: false, content: '', error: `技能 "${skillName}" 未找到或未激活` }
     }
 
-    if (!skill.scripts.includes(scriptName)) {
+    // 支持 .ts → .js 自动降级：LLM 可能请求 write_file.ts，但编译后只有 .js
+    let resolvedScriptName = scriptName
+    if (!skill.scripts.includes(scriptName) && scriptName.endsWith('.ts')) {
+      const jsFallback = scriptName.replace(/\.ts$/, '.js')
+      if (skill.scripts.includes(jsFallback)) {
+        resolvedScriptName = jsFallback
+      }
+    }
+
+    if (!skill.scripts.includes(resolvedScriptName)) {
       return {
         success: false,
         content: '',
@@ -391,7 +400,7 @@ export class SkillManager {
       }
     }
 
-    const scriptPath = join(skill.skillDir, 'scripts', scriptName)
+    const scriptPath = join(skill.skillDir, 'scripts', resolvedScriptName)
     const argsStr = (args.args as string) || '{}'
     console.log(`[skill-manager] run_skill_script: ${scriptPath}`)
 
