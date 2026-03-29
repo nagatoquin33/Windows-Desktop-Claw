@@ -345,9 +345,14 @@ export class SkillManager {
     switch (ext) {
       case 'sh':
       case 'bash':
-        return { cmd: '/bin/bash', prefixArgs: [scriptPath] }
+        return process.platform === 'win32'
+          ? { cmd: 'cmd.exe', prefixArgs: ['/c', scriptPath] }
+          : { cmd: '/bin/bash', prefixArgs: [scriptPath] }
       case 'py':
-        return { cmd: 'python3', prefixArgs: [scriptPath] }
+        return {
+          cmd: process.platform === 'win32' ? 'python' : 'python3',
+          prefixArgs: [scriptPath]
+        }
       case 'js':
       case 'mjs':
         // 使用 process.execPath 确保在 Electron 打包环境中可用（自带 Node 运行时）

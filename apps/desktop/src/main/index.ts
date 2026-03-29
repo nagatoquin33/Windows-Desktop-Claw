@@ -67,8 +67,12 @@ function createBallWindow(): void {
     }
   })
 
-  // macOS: floating 层级 — 浮于普通窗口之上，不遮挡全屏
-  ballWin.setAlwaysOnTop(true, 'floating')
+  // floating 层级 — macOS 浮于普通窗口之上不遮挡全屏；Windows 无此层级参数
+  if (process.platform === 'darwin') {
+    ballWin.setAlwaysOnTop(true, 'floating')
+  } else {
+    ballWin.setAlwaysOnTop(true)
+  }
 
   // 透明区域点击穿透，forward: true 保留 mousemove 以触发 mouseenter/leave
   ballWin.setIgnoreMouseEvents(true, { forward: true })
@@ -301,7 +305,11 @@ function createPanelWindow(): void {
     }
   })
 
-  panelWin.setAlwaysOnTop(true, 'floating')
+  if (process.platform === 'darwin') {
+    panelWin.setAlwaysOnTop(true, 'floating')
+  } else {
+    panelWin.setAlwaysOnTop(true)
+  }
   panelWin.on('ready-to-show', () => panelWin?.show())
   panelWin.on('closed', () => { panelWin = null })
 
@@ -343,7 +351,11 @@ function createSettingsWindow(): void {
     }
   })
 
-  settingsWin.setAlwaysOnTop(true, 'floating')
+  if (process.platform === 'darwin') {
+    settingsWin.setAlwaysOnTop(true, 'floating')
+  } else {
+    settingsWin.setAlwaysOnTop(true)
+  }
   settingsWin.on('ready-to-show', () => settingsWin?.show())
   settingsWin.on('closed', () => { settingsWin = null })
 
