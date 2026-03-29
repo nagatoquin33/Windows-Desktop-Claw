@@ -9,7 +9,7 @@
  * 若未注入（backend 单独运行），则 fallback 到开发模式路径探测。
  */
 import { join } from 'path'
-import { existsSync, mkdirSync, copyFileSync, readdirSync } from 'fs'
+import { existsSync, mkdirSync, copyFileSync, readdirSync, readFileSync } from 'fs'
 
 // ─── 单例路径 ────────────────────────────────
 
@@ -84,15 +84,23 @@ function ensureDataStructure(dir: string): void {
  */
 export function copyInitialTemplates(builtinPersonaDir: string): void {
   const targetDir = getPersonaDir()
-  const templateFiles = ['SOUL.md', 'BOOTSTRAP.md']
 
-  for (const file of templateFiles) {
-    const target = join(targetDir, file)
-    const source = join(builtinPersonaDir, file)
-    // 只在目标不存在时复制（不覆盖用户已有数据）
-    if (!existsSync(target) && existsSync(source)) {
-      copyFileSync(source, target)
-    }
+  // SOUL.md 始终需要（不覆盖已有）
+  const soulTarget = join(targetDir, 'SOUL.md')
+  const soulSource = join(builtinPersonaDir, 'SOUL.md')
+  if (!existsSync(soulTarget) && existsSync(soulSource)) {
+    copyFileSync(soulSource, soulTarget)
+  }
+
+  // BOOTSTRAP.md 仅在引导未完成时复制：
+  // 如果 USER.md 已有实质内容（>200 字节，非空模板），说明引导已完成，不再复制
+  const userMdPath = join(targetDir, 'USER.md')
+  const bootstrapTarget = join(targetDir, 'BOOTSTRAP.md')
+  const bootstrapSource = join(builtinPersonaDir, 'BOOTSTRAP.md')
+  const bootstrapCompleted = existsSync(userMdPath)
+    && readFileSync(userMdPath, 'utf-8').length > 200
+  if (!bootstrapCompleted && !existsSync(bootstrapTarget) && existsSync(bootstrapSource)) {
+    copyFileSync(bootstrapSource, bootstrapTarget)
   }
 
   // USER.md 和 CONTEXT.md 如果不存在，创建空模板
