@@ -5,6 +5,7 @@ import type { ChatMessageData } from '@desktop-claw/shared'
 import { TaskCoordinator } from '../task-coordinator'
 import { memoryService } from '../memory/memory-service'
 import { emotionService } from '../memory/emotion-service'
+import { feedInterpretBuffer } from '../memory/interpret-service'
 import {
   getRequestToken,
   isAllowedOrigin,
@@ -21,11 +22,16 @@ const coordinator = new TaskCoordinator(
   // getHistory：返回不含最后一条 user 消息的历史（agentLoop 内部会自己追加 prompt）
   () => conversation.slice(0, -1),
   // pushMessages：任务完成后追加本轮所有消息（tool_calls + tool_result + final assistant）
-  (messages) => {
+  (messages, userContent) => {
     conversation.push(...messages)
     memoryService.appendMessages(messages)
     // 异步触发摘要压缩检查（不阻塞当前任务完成）
     void memoryService.compressIfNeeded(conversation)
+    // 将本轮对话喂入 interpret buffer（补上 user 消息，确保轮次计数正确）
+    const interpretMessages: ChatMessageData[] = []
+    if (userContent) interpretMessages.push({ role: 'user', content: userContent })
+    interpretMessages.push(...messages)
+    feedInterpretBuffer(interpretMessages)
   }
 )
 
@@ -112,6 +118,10 @@ function handleClientMessage(
     case 'task.create': {
       const content = (msg.payload?.content as string) ?? ''
 
+      // 先将用户消息追加到内存会话，确保 enqueue → drain → getHistory()
+      // 能看到完整历史（slice(0,-1) 正确去掉本条 user 消息而非上轮 assistant 回复）
+      conversation.push({ role: 'user', content })
+
       // 入队 Task Coordinator（串行执行）
       let streamNotified = false
       const accepted = coordinator.enqueue(msg.taskId, content, {
@@ -170,6 +180,8 @@ function handleClientMessage(
       })
 
       if (!accepted) {
+        // 入队失败，回滚内存中的消息
+        conversation.pop()
         broadcast({
           id: genMsgId(),
           type: 'task.error',
@@ -180,8 +192,7 @@ function handleClientMessage(
         break
       }
 
-      // 只有任务真正被接受后，才将用户消息写入内存与磁盘。
-      conversation.push({ role: 'user', content })
+      // 入队成功，写入磁盘归档
       memoryService.appendMessage({ role: 'user', content })
       emotionService.notifyUserMessage()
 

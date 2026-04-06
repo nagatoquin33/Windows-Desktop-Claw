@@ -1,4 +1,4 @@
-import type { ChatMessageData, ToolCall } from '@desktop-claw/shared'
+import type { ChatMessageData, ToolCall, ToolSchema, ToolResult } from '@desktop-claw/shared'
 import { streamChat } from '../llm/client'
 import { loadLLMConfig } from '../llm/config'
 import { estimateTokens, estimateMessageTokens, estimateHistoryTokens } from '../llm/token-estimator'
@@ -69,8 +69,11 @@ export function agentLoop(params: AgentLoopParams): AbortController {
 /** 根据工具名 + 参数生成用户可见的状态文案 */
 function toolStatusText(toolName: string, args: Record<string, unknown>): string {
   if (toolName === 'activate_skill') return '🔧 激活技能中...'
+  if (toolName === 'save_memory') return '💾 保存记忆中...'
+  if (toolName === 'forget_memory') return '🗑️ 删除记忆中...'
   if (toolName === 'run_skill_script') {
-    const script = String(args.script ?? '')
+    const script = String(args.script_name ?? args.script ?? '')
+    if (script.includes('query_index') || script.includes('get_memory') || script.includes('recall_raw')) return '💭 回忆中...'
     if (script.includes('recall_memory') || script.includes('search_memory')) return '💭 回忆中...'
     if (script.includes('read_file')) return '📖 读取文件中...'
     if (script.includes('write_file') || script.includes('edit_file')) return '✏️ 写入文件中...'
@@ -236,4 +239,117 @@ function callLLM(
     // 关联取消：agentLoop 的 controller abort 时，也 abort LLM 请求
     controller.signal.addEventListener('abort', () => abort.abort(), { once: true })
   })
+}
+
+// ─── Background Agent Loop ────────────────────────
+
+/** 后台 Agent Loop 最大迭代回合数 */
+const BG_MAX_STEPS = 8
+
+export interface BackgroundAgentLoopParams {
+  /** 自定义 system prompt（从 SKILL.md 读取） */
+  systemPrompt: string
+  /** 要处理的内容（作为 user message 传给 LLM） */
+  userMessage: string
+  /** 可用的 tool schemas */
+  tools: ToolSchema[]
+  /** tool 执行器：name + args → result */
+  executeTool: (name: string, args: Record<string, unknown>) => Promise<ToolResult>
+}
+
+export interface BackgroundAgentLoopResult {
+  /** 是否成功完成 */
+  success: boolean
+  /** LLM 最终返回的文本（如果有） */
+  content: string | null
+  /** 执行过程中调用的 tool 次数 */
+  toolCallCount: number
+  /** 错误信息（如果失败） */
+  error?: string
+}
+
+/**
+ * 后台 Agent Loop（B4.0）
+ *
+ * 精简版 ReAct 循环，用于 memory-interpret / memory-maintain 等后台 skill。
+ * - 不流式输出，不推给前端
+ * - 接受自定义 system prompt + tools
+ * - 返回 Promise<BackgroundAgentLoopResult>
+ */
+export async function backgroundAgentLoop(
+  params: BackgroundAgentLoopParams
+): Promise<BackgroundAgentLoopResult> {
+  const { systemPrompt, userMessage, tools, executeTool } = params
+  const controller = new AbortController()
+  const messages: ChatMessageData[] = [{ role: 'user', content: userMessage }]
+  let toolCallCount = 0
+
+  for (let step = 0; step < BG_MAX_STEPS; step++) {
+    // 静默调用 LLM（onToken 为空函数）
+    const result = await callLLM(messages, () => {}, controller, systemPrompt, tools)
+
+    if (result.error) {
+      return {
+        success: false,
+        content: null,
+        toolCallCount,
+        error: `${result.error.code}: ${result.error.message}`
+      }
+    }
+
+    // LLM 返回 tool_calls → 执行 → 追加结果 → 继续
+    if (result.toolCalls && result.toolCalls.length > 0) {
+      messages.push({
+        role: 'assistant',
+        content: result.content || '',
+        tool_calls: result.toolCalls
+      })
+
+      for (const tc of result.toolCalls) {
+        let toolName: string
+        let toolArgs: Record<string, unknown>
+
+        try {
+          toolName = tc.function.name
+          toolArgs = JSON.parse(tc.function.arguments)
+        } catch {
+          messages.push({
+            role: 'tool',
+            content: `参数解析失败: ${tc.function.arguments}`,
+            tool_call_id: tc.id
+          })
+          toolCallCount++
+          continue
+        }
+
+        console.log(`[bg-agent] executing tool: ${toolName}`)
+        const toolResult = await executeTool(toolName, toolArgs)
+        toolCallCount++
+
+        messages.push({
+          role: 'tool',
+          content: toolResult.success
+            ? toolResult.content
+            : `错误: ${toolResult.error ?? '未知错误'}`,
+          tool_call_id: tc.id
+        })
+      }
+
+      continue
+    }
+
+    // LLM 返回纯文本 → 完成
+    return {
+      success: true,
+      content: result.content || null,
+      toolCallCount
+    }
+  }
+
+  return {
+    success: false,
+    content: null,
+    toolCallCount,
+    error: `Background Agent Loop 达到最大回合数 (${BG_MAX_STEPS})`
+  }
 }

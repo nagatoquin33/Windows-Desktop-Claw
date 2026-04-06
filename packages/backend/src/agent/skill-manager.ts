@@ -4,6 +4,8 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import type { ToolSchema, ToolResult, ToolDefinition } from '@desktop-claw/shared'
 import { getDataDir } from '../paths'
+import { saveMemoryTool } from '../memory/save-memory-tool'
+import { forgetMemoryTool } from '../memory/forget-memory-tool'
 import {
   extractFrontmatter,
   formatDiscoveryPrompt,
@@ -30,7 +32,7 @@ interface BuiltinSkillConfig {
  */
 const BUILTIN_SKILLS: BuiltinSkillConfig[] = [
   { name: 'file', autoActivate: true },
-  { name: 'memory' }
+  { name: 'memory', tools: [saveMemoryTool, forgetMemoryTool], autoActivate: true }
 ]
 
 /**
@@ -38,7 +40,7 @@ const BUILTIN_SKILLS: BuiltinSkillConfig[] = [
  * - 生产模式：process.resourcesPath/skills（预编译 JS + SKILL.md）
  * - 开发模式：源码 packages/backend/src/agent/skills/
  */
-function resolveSkillsDir(): string {
+export function resolveSkillsDir(): string {
   const candidates: string[] = []
 
   // 生产环境：extraResources 打入 skills/

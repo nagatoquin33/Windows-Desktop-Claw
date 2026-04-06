@@ -31,3 +31,30 @@ export {
   EMOTION_MIN_HOLD_MS,
   EMOTION_DEBOUNCE_MS
 } from './types/emotion'
+
+// ─── Memory System ───────────────────────────
+
+export type {
+  MemoryType,
+  SourceRef,
+  MemoryObjectBase,
+  SourceMode,
+  SourceStatus,
+  FastFingerprint,
+  SourceRecord,
+  SelfCategory,
+  SelfMemoryItem,
+  RelationshipMemoryItem,
+  TopicStatus,
+  TopicMemoryItem,
+  SavedKind,
+  SavedArchiveItem,
+  MemoryObject,
+  MemoryIndexEntry,
+  SourceIndexEntry,
+  SelfIndexEntry,
+  RelationshipIndexEntry,
+  TopicIndexEntry,
+  SavedIndexEntry,
+  MemoryManifest
+} from './types/memory'

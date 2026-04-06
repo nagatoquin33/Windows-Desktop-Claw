@@ -81,7 +81,7 @@ function buildBasePrompt(isBootstrap: boolean, dataDir: string): string {
 
 ## 记忆引导
 
-你的长期记忆存在 CONTEXT.md 中（已注入到下方）。如需回忆更早或更详细的内容，使用 recall_memory 或 search_memory 工具。如需精确还原原始对话，用 read_file 读取 data/memory/YYYY-MM-DD.json。`
+你的长期记忆存在 USER.md 和 CONTEXT.md 中（已注入到下方）。如需回忆更早或更详细的内容，使用 memory 技能（query_index → get_memory → recall_raw）。如需精确还原原始对话，用 read_file 读取 data/memory/YYYY-MM-DD.json。`
   }
 
   return prompt

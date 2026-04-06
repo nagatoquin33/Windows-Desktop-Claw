@@ -13,7 +13,7 @@
  * 若未注入（backend 单独运行），则 fallback 到开发模式路径探测。
  */
 import { join } from 'path'
-import { existsSync, mkdirSync, copyFileSync, readdirSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync, copyFileSync, readdirSync, readFileSync, writeFileSync } from 'fs'
 
 // ─── 单例路径 ────────────────────────────────
 
@@ -64,6 +64,38 @@ export function getMemoryDir(): string {
   return join(getDataDir(), 'memory')
 }
 
+// ─── Memory System 子目录 ────────────────────
+
+/** data/memory/sources/ — 一个 source 一个 JSON */
+export function getSourcesDir(): string {
+  return join(getMemoryDir(), 'sources')
+}
+
+/** data/memory/self/ — 聚合 items.json */
+export function getSelfDir(): string {
+  return join(getMemoryDir(), 'self')
+}
+
+/** data/memory/relationships/ — 聚合 items.json */
+export function getRelationshipsDir(): string {
+  return join(getMemoryDir(), 'relationships')
+}
+
+/** data/memory/topics/ — 一个 topic 一个 JSON */
+export function getTopicsDir(): string {
+  return join(getMemoryDir(), 'topics')
+}
+
+/** data/memory/saved/ — 聚合 items.json */
+export function getSavedDir(): string {
+  return join(getMemoryDir(), 'saved')
+}
+
+/** data/memory/indexes/ — manifest + 分类索引 */
+export function getIndexesDir(): string {
+  return join(getMemoryDir(), 'indexes')
+}
+
 /** 获取 config.json 路径 */
 export function getConfigPath(): string {
   return join(getDataDir(), 'config.json')
@@ -78,6 +110,68 @@ function ensureDataStructure(dir: string): void {
     const p = join(dir, sub)
     if (!existsSync(p)) {
       mkdirSync(p, { recursive: true })
+    }
+  }
+
+  // Memory System 子目录
+  const memoryDir = join(dir, 'memory')
+  const memorySubdirs = ['sources', 'self', 'relationships', 'topics', 'saved', 'indexes']
+  for (const sub of memorySubdirs) {
+    const p = join(memoryDir, sub)
+    if (!existsSync(p)) {
+      mkdirSync(p, { recursive: true })
+    }
+  }
+
+  // 初始化空的聚合文件与索引
+  ensureMemoryFiles(memoryDir)
+}
+
+/**
+ * 初始化 Memory System 的聚合文件与索引
+ * 仅在文件不存在时创建，不覆盖已有数据
+ */
+function ensureMemoryFiles(memoryDir: string): void {
+  const now = new Date().toISOString()
+
+  // 聚合 items.json — self / relationships / saved
+  const aggregatedDirs = ['self', 'relationships', 'saved']
+  for (const sub of aggregatedDirs) {
+    const itemsPath = join(memoryDir, sub, 'items.json')
+    if (!existsSync(itemsPath)) {
+      writeFileSync(itemsPath, JSON.stringify({ items: [] }, null, 2), 'utf-8')
+    }
+  }
+
+  // Indexes — manifest + 5 类分类索引
+  const indexesDir = join(memoryDir, 'indexes')
+
+  const manifestPath = join(indexesDir, 'manifest.json')
+  if (!existsSync(manifestPath)) {
+    const manifest = {
+      lastRebuiltAt: now,
+      indexes: [
+        { type: 'source', path: 'source-index.json', count: 0, updatedAt: now },
+        { type: 'self', path: 'self-index.json', count: 0, updatedAt: now },
+        { type: 'relationship', path: 'relationship-index.json', count: 0, updatedAt: now },
+        { type: 'topic', path: 'topic-index.json', count: 0, updatedAt: now },
+        { type: 'saved', path: 'saved-index.json', count: 0, updatedAt: now }
+      ]
+    }
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8')
+  }
+
+  const indexFiles = [
+    'source-index.json',
+    'self-index.json',
+    'relationship-index.json',
+    'topic-index.json',
+    'saved-index.json'
+  ]
+  for (const file of indexFiles) {
+    const p = join(indexesDir, file)
+    if (!existsSync(p)) {
+      writeFileSync(p, JSON.stringify({ entries: [] }, null, 2), 'utf-8')
     }
   }
 }

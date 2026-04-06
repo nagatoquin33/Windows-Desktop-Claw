@@ -575,11 +575,12 @@ app.on('before-quit', (event) => {
     win.destroy()
   }
 
-  // 关机归档：sealDay → close → exit，设 30s 超时兜底（sealDay 内部有 2×20s LLM 调用）
+  // 关机归档：sealDay → close → exit，设 60s 超时兜底
+  // sealDay 内部：flush(15s) + finalize(15s) + internalize(15s) + maintain + capsule ≈ 50s 上限
   const exitTimer = setTimeout(() => {
     console.warn('[main] shutdown timeout, force exit')
     app.exit(0)
-  }, 30000)
+  }, 60000)
 
   const handle = backendHandle
   handle.sealDay()

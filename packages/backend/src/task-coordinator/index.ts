@@ -18,6 +18,8 @@ interface Task {
   content: string
   status: TaskStatus
   callbacks: TaskCallbacks
+  /** 入队时捕获的历史快照，避免多任务排队时 getHistory() 错位 */
+  history: ChatMessageData[]
 }
 
 /** 队列上限，防堆积 */
@@ -43,11 +45,11 @@ export class TaskCoordinator {
   /** 获取会话历史的回调，由外部注入 */
   private getHistory: () => ChatMessageData[]
   /** 任务完成后追加本轮产生的所有消息（含 tool_calls / tool_result / final assistant） */
-  private pushMessages: (messages: ChatMessageData[]) => void
+  private pushMessages: (messages: ChatMessageData[], userContent: string) => void
 
   constructor(
     getHistory: () => ChatMessageData[],
-    pushMessages: (messages: ChatMessageData[]) => void
+    pushMessages: (messages: ChatMessageData[], userContent: string) => void
   ) {
     this.getHistory = getHistory
     this.pushMessages = pushMessages
@@ -63,7 +65,9 @@ export class TaskCoordinator {
       return false
     }
 
-    const task: Task = { taskId, content, status: 'pending', callbacks }
+    // 入队时快照历史，确保多任务排队时每个 task 看到正确的上下文
+    const history = this.getHistory()
+    const task: Task = { taskId, content, status: 'pending', callbacks, history }
     this.queue.push(task)
     console.log(`[coordinator] enqueued task ${taskId} (queue: ${this.queue.length})`)
 
@@ -143,19 +147,23 @@ export class TaskCoordinator {
 
     this.abortController = agentLoop({
       prompt: next.content,
-      history: this.getHistory(),
+      history: next.history,
       onToken: (delta) => next.callbacks.onToken(delta),
       onStatus: next.callbacks.onStatus ? (text) => next.callbacks.onStatus!(text) : undefined,
       onDone: (fullContent, newMessages) => {
+        // 防竞态：cancel 后旧回调可能迟到，忽略已不是当前 running 的任务
+        if (this.running !== next) return
         next.status = 'done'
         this.clearTaskTimer()
-        this.pushMessages(newMessages)
+        this.pushMessages(newMessages, next.content)
         next.callbacks.onDone(fullContent)
         this.running = null
         this.abortController = null
         this.drain()
       },
       onError: (code, message) => {
+        // 防竞态：cancel 后旧回调可能迟到，忽略已不是当前 running 的任务
+        if (this.running !== next) return
         next.status = 'failed'
         this.clearTaskTimer()
         next.callbacks.onError(code, message)

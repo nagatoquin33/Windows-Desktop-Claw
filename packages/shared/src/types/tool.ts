@@ -14,6 +14,9 @@ export interface ToolSchema {
           type: string
           description: string
           enum?: string[]
+          /** array 类型的元素 schema */
+          items?: Record<string, unknown>
+          [key: string]: unknown
         }
       >
       required: string[]

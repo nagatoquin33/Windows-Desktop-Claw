@@ -5,6 +5,9 @@ import { streamChat } from '../llm/client'
 import { loadLLMConfig } from '../llm/config'
 import { estimateHistoryTokens } from '../llm/token-estimator'
 import { getMemoryDir, getPersonaDir } from '../paths'
+import { flushInterpretBuffer } from './interpret-service'
+import { runMaintenance } from './maintain-service'
+import { compileCapsules, canCompileUserMd, canCompileContextMd } from './capsule-compiler'
 
 // ─── 类型定义 ────────────────────────────────
 
@@ -171,9 +174,20 @@ export class MemoryService {
 
   // ── 写入 ──
 
+  /** 同日重新打开时，启封归档以便 sealDay 重新处理全部对话 */
+  private _unsealIfNeeded(archive: DayArchive): void {
+    if (!archive.sealed) return
+    archive.sealed = false
+    archive.summary = null
+    archive.diary = null
+    archive.facts = null
+    console.log(`[memory] unsealed archive ${archive.date} — new messages in resumed session`)
+  }
+
   /** 追加单条消息到当日 JSON（实时写盘） */
   appendMessage(msg: ChatMessageData): void {
     const archive = ensureTodayArchive()
+    this._unsealIfNeeded(archive)
     const persisted: PersistedMessage = {
       ...msg,
       ts: new Date().toISOString()
@@ -186,6 +200,7 @@ export class MemoryService {
   appendMessages(msgs: ChatMessageData[]): void {
     if (msgs.length === 0) return
     const archive = ensureTodayArchive()
+    this._unsealIfNeeded(archive)
     const now = new Date()
     for (let i = 0; i < msgs.length; i++) {
       archive.messages.push({
@@ -378,12 +393,24 @@ ${transcript}
   /**
    * 每日内化：读取当日归档快照，调用 LLM 更新 CONTEXT.md 和 USER.md。
    * 在 finalizeDayArchive 完成（summary/facts/diary 已生成）后调用。
+   *
+   * 渐进迁移（B5.4）：如果结构化记忆已足够接管某个文件的编译，
+   * 则跳过该文件的 LLM 内化调用，交给 compileCapsules() 处理。
    */
   async internalize(date?: string): Promise<void> {
     const targetDate = date ?? todayDateStr()
     const archive = readArchive(targetDate)
     if (!archive || (!archive.summary && !archive.facts)) {
       console.log(`[memory] no summary/facts for ${targetDate}, skip internalize`)
+      return
+    }
+
+    // B5.4 渐进迁移：检查哪些文件由 capsule compiler 接管
+    const capsuleHandlesContext = canCompileContextMd()
+    const capsuleHandlesUser = canCompileUserMd()
+
+    if (capsuleHandlesContext && capsuleHandlesUser) {
+      console.log(`[memory] structured memory available — skip legacy internalize, capsule compiler will handle both`)
       return
     }
 
@@ -400,47 +427,55 @@ ${transcript}
       archive.diary ? `日记：${archive.diary}` : ''
     ].filter(Boolean).join('\n\n')
 
-    // ── 更新 CONTEXT.md ──
-    try {
-      const newContext = await callLLMForText(
-        `你是 Claw 的记忆内化助手。根据今天（${targetDate}）的对话快照和当前 CONTEXT.md，决定哪些新信息值得跨天记住。
+    // ── 更新 CONTEXT.md（仅在 capsule compiler 未接管时） ──
+    if (capsuleHandlesContext) {
+      console.log(`[memory] CONTEXT.md → capsule compiler will handle, skip legacy internalize`)
+    } else {
+      try {
+        const newContext = await callLLMForText(
+          `你是 Claw 的记忆内化助手。根据今天（${targetDate}）的对话快照和当前 CONTEXT.md，决定哪些新信息值得跨天记住。
 规则：
 - 保留 "# 动态认知" 标题和引用说明
 - 新增、修改或删除过时的条目
 - 记录进行中的事项、形成的共识、值得跨天记住的信息
 - 保持精简，整个文件不超过 800 字
 - 输出完整的更新后 CONTEXT.md 内容`,
-        `当前 CONTEXT.md：\n\n${currentContext}\n\n---\n\n今日对话快照（${targetDate}）：\n\n${snapshot}`
-      )
+          `当前 CONTEXT.md：\n\n${currentContext}\n\n---\n\n今日对话快照（${targetDate}）：\n\n${snapshot}`
+        )
 
-      if (newContext && newContext.length > 20) {
-        writeFileSync(contextPath, newContext.trim() + '\n', 'utf-8')
-        console.log(`[memory] internalized CONTEXT.md (${newContext.length} chars)`)
+        if (newContext && newContext.length > 20) {
+          writeFileSync(contextPath, newContext.trim() + '\n', 'utf-8')
+          console.log(`[memory] internalized CONTEXT.md (${newContext.length} chars)`)
+        }
+      } catch (err) {
+        console.error(`[memory] failed to internalize CONTEXT.md:`, err)
       }
-    } catch (err) {
-      console.error(`[memory] failed to internalize CONTEXT.md:`, err)
     }
 
-    // ── 有条件更新 USER.md ──
-    try {
-      const userUpdate = await callLLMForText(
-        `你是 Claw 的用户画像更新助手。根据今天的对话事实，判断是否有新的用户信息或偏好需要记录到 USER.md。
+    // ── 有条件更新 USER.md（仅在 capsule compiler 未接管时） ──
+    if (capsuleHandlesUser) {
+      console.log(`[memory] USER.md → capsule compiler will handle, skip legacy internalize`)
+    } else {
+      try {
+        const userUpdate = await callLLMForText(
+          `你是 Claw 的用户画像更新助手。根据今天的对话事实，判断是否有新的用户信息或偏好需要记录到 USER.md。
 规则：
 - 如果没有新信息，只回复四个字："无需更新"
 - 如果有新信息，输出完整的更新后 USER.md 内容
 - 保留 "# 用户画像" 标题和引用说明
 - 只记录用户的基本信息和偏好（称呼、背景、习惯等），不记录对话内容`,
-        `当前 USER.md：\n\n${currentUser}\n\n---\n\n今日事实：\n\n${snapshot}`
-      )
+          `当前 USER.md：\n\n${currentUser}\n\n---\n\n今日事实：\n\n${snapshot}`
+        )
 
-      if (userUpdate && !userUpdate.includes('无需更新') && userUpdate.length > 20) {
-        writeFileSync(userPath, userUpdate.trim() + '\n', 'utf-8')
-        console.log(`[memory] internalized USER.md (${userUpdate.length} chars)`)
-      } else {
-        console.log(`[memory] USER.md no update needed`)
+        if (userUpdate && !userUpdate.includes('无需更新') && userUpdate.length > 20) {
+          writeFileSync(userPath, userUpdate.trim() + '\n', 'utf-8')
+          console.log(`[memory] internalized USER.md (${userUpdate.length} chars)`)
+        } else {
+          console.log(`[memory] USER.md no update needed`)
+        }
+      } catch (err) {
+        console.error(`[memory] failed to internalize USER.md:`, err)
       }
-    } catch (err) {
-      console.error(`[memory] failed to internalize USER.md:`, err)
     }
   }
 
@@ -461,6 +496,13 @@ ${transcript}
     const archive = readArchive(date)
     if (!archive) return false
     if (archive.sealed) return true
+
+    // 日级兜底：seal 前刷出 interpret buffer 中的残留内容
+    try {
+      await flushInterpretBuffer()
+    } catch (err) {
+      console.error(`[memory] interpret flush failed for ${date}:`, err)
+    }
 
     const shouldFinalize = this._shouldFinalizeArchive(archive)
     if (!shouldFinalize) {
@@ -571,6 +613,13 @@ ${transcript}
       console.log(`[boot] yesterday diary: ${result.yesterdayDiary.slice(0, 80)}...`)
     }
 
+    // 确保 persona 文件与结构化索引同步（补偿 sealDay 后 USER.md 被重置等异常情况）
+    try {
+      await compileCapsules()
+    } catch (err) {
+      console.error('[boot] capsule compilation failed:', err)
+    }
+
     return result
   }
 
@@ -633,10 +682,26 @@ ${transcript}
     if (!archive) return
     if (archive.sealed) return
 
-    await this._completeArchive(date, {
-      finalizeTimeoutMs: 20000,
-      internalizeTimeoutMs: 20000
+    const sealed = await this._completeArchive(date, {
+      finalizeTimeoutMs: 15000,
+      internalizeTimeoutMs: 15000
     })
+
+    // seal 成功后执行每日维护
+    if (sealed) {
+      try {
+        await runMaintenance()
+      } catch (err) {
+        console.error('[memory] maintenance failed:', err)
+      }
+
+      // 维护完成后，从结构化记忆编译 prompt capsule（USER.md / CONTEXT.md）
+      try {
+        await compileCapsules()
+      } catch (err) {
+        console.error('[memory] capsule compilation failed:', err)
+      }
+    }
   }
 }
 
